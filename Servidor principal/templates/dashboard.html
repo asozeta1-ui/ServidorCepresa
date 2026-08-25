@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CEPRESA - Dashboard de Alerta Sísmica</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            overflow: hidden;
+            height: 100vh;
+        }
+        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            z-index: 1000;
+            background: linear-gradient(180deg, rgba(20,20,30,0.95) 0%, rgba(20,20,30,0.7) 80%, transparent 100%);
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .brand {
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: #e94560;
+            letter-spacing: 3px;
+        }
+        .stats {
+            text-align: right;
+        }
+        .stats .count {
+            font-size: 2.8rem;
+            font-weight: 700;
+            color: #0f3460;
+            background: #e94560;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .stats .label {
+            font-size: 0.85rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .status-bar {
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            z-index: 1000;
+            background: linear-gradient(0deg, rgba(20,20,30,0.95) 0%, transparent 100%);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: #666;
+        }
+        .status-dot {
+            display: inline-block;
+            width: 8px; height: 8px;
+            background: #4caf50;
+            border-radius: 50%;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Modo Alerta Costa Rica */
+        .alert-mode { animation: alertBorder 0.5s infinite alternate; }
+        @keyframes alertBorder {
+            from { box-shadow: inset 0 0 60px rgba(255,0,0,0.3); }
+            to { box-shadow: inset 0 0 120px rgba(255,0,0,0.7); }
+        }
+        #alert-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 9999;
+            background: rgba(180, 0, 0, 0.15);
+            pointer-events: none;
+            animation: alertFlash 0.8s infinite alternate;
+        }
+        @keyframes alertFlash {
+            from { background: rgba(180, 0, 0, 0.1); }
+            to { background: rgba(180, 0, 0, 0.35); }
+        }
+        #alert-message {
+            display: none;
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10000;
+            background: rgba(140, 0, 0, 0.95);
+            color: #fff;
+            padding: 40px 60px;
+            border-radius: 12px;
+            text-align: center;
+            border: 3px solid #ff0000;
+            box-shadow: 0 0 80px rgba(255, 0, 0, 0.6);
+            animation: alertPulse 1s infinite alternate;
+            pointer-events: none;
+        }
+        @keyframes alertPulse {
+            from { box-shadow: 0 0 40px rgba(255,0,0,0.4); }
+            to { box-shadow: 0 0 100px rgba(255,0,0,0.8); }
+        }
+        #alert-message h1 { font-size: 2.5rem; margin-bottom: 10px; }
+        #alert-message p { font-size: 1.1rem; color: #ffcccc; }
+
+        .event-log {
+            position: absolute;
+            top: 90px; right: 20px;
+            z-index: 1000;
+            background: rgba(15,15,25,0.9);
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            width: 280px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 0.75rem;
+        }
+        .event-log h3 { color: #e94560; margin-bottom: 6px; font-size: 0.85rem; }
+        .event-item { padding: 3px 0; border-bottom: 1px solid #222; color: #aaa; }
+        .event-item.alert { color: #ff4444; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div class="overlay">
+        <div class="brand">CEPRESA</div>
+        <div class="stats">
+            <div class="count" id="user-count">0</div>
+            <div class="label">personas en linea</div>
+        </div>
+    </div>
+
+    <div class="event-log" id="event-log">
+        <h3>Eventos en tiempo real</h3>
+        <div id="event-list"></div>
+    </div>
+
+    <div class="status-bar">
+        <div><span class="status-dot"></span> Sistema activo</div>
+        <div id="last-event">Esperando eventos...</div>
+    </div>
+
+    <div id="alert-overlay"></div>
+    <div id="alert-message">
+        <h1>ALERTA SISICA</h1>
+        <p>Sismo detectado por la red CEPRESA</p>
+        <p id="alert-detail"></p>
+    </div>
+
+    <script>
+        // --- Map initialization ---
+        const map = L.map('map', {
+            zoomControl: false,
+            attributionControl: false
+        }).setView([9.75, -83.75], 7);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19
+        }).addTo(map);
+
+        // --- Socket.IO ---
+        const socket = io();
+        const markers = [];
+        const sensorMarkers = [];
+        let alertActive = false;
+
+        socket.on('connect', () => {
+            console.log('Conectado al servidor CEPRESA');
+            addEvent('Conectado al servidor', false);
+        });
+
+        socket.on('update_users', (data) => {
+            document.getElementById('user-count').textContent = data.count;
+        });
+
+        socket.on('sensor_event', (data) => {
+            const { latitud, longitud, user_id } = data;
+            const marker = L.circleMarker([latitud, longitud], {
+                radius: 6,
+                fillColor: '#ff9800',
+                color: '#ff5722',
+                weight: 2,
+                opacity: 0.9,
+                fillOpacity: 0.6
+            }).addTo(map);
+
+            sensorMarkers.push(marker);
+            setTimeout(() => {
+                map.removeLayer(marker);
+                const idx = sensorMarkers.indexOf(marker);
+                if (idx > -1) sensorMarkers.splice(idx, 1);
+            }, 8000);
+
+            addEvent(`Sensor: ${user_id} reporta振动 en (${latitud.toFixed(3)}, ${longitud.toFixed(3)})`, false);
+        });
+
+        socket.on('alerta_sismica', (data) => {
+            const { latitud, longitud, mensaje, simulado } = data;
+
+            // Add permanent marker
+            const alertMarker = L.marker([latitud, longitud], {
+                icon: L.divIcon({
+                    className: 'alert-marker',
+                    html: '<div style="background:#ff0000;width:20px;height:20px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 15px rgba(255,0,0,0.8);animation:pulse 0.5s infinite alternate;"></div>',
+                    iconSize: [20, 20],
+                    iconAnchor: [10, 10]
+                })
+            }).addTo(map).bindPopup(`<b style="color:red">ALERTA SISICA</b><br>${mensaje}`);
+
+            markers.push(alertMarker);
+            map.setView([latitud, longitud], 9);
+
+            // Activate alert mode
+            activateAlertMode(data);
+        });
+
+        function activateAlertMode(data) {
+            alertActive = true;
+            document.body.classList.add('alert-mode');
+            document.getElementById('alert-overlay').style.display = 'block';
+            const alertMsg = document.getElementById('alert-message');
+            alertMsg.style.display = 'block';
+            document.getElementById('alert-detail').textContent =
+                `Coordenadas: ${data.latitud.toFixed(4)}, ${data.longitud.toFixed(4)} | ${data.timestamp}`;
+            document.getElementById('last-event').textContent = `ALERTA: ${new Date().toLocaleTimeString()}`;
+
+            addEvent(`ALERTA SISICA ACTIVADA en (${data.latitud}, ${data.longitud})`, true);
+
+            // Play alert sound
+            try {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                function playAlarm() {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.frequency.value = 880;
+                    osc.type = 'square';
+                    gain.gain.value = 0.3;
+                    osc.start();
+                    setTimeout(() => { osc.stop(); }, 200);
+                    if (alertActive) setTimeout(playAlarm, 400);
+                }
+                playAlarm();
+            } catch(e) { console.log('Audio no disponible'); }
+
+            // Auto-clear after 30s for demo
+            setTimeout(() => {
+                alertActive = false;
+                document.body.classList.remove('alert-mode');
+                document.getElementById('alert-overlay').style.display = 'none';
+                document.getElementById('alert-message').style.display = 'none';
+            }, 30000);
+        }
+
+        function addEvent(text, isAlert) {
+            const list = document.getElementById('event-list');
+            const item = document.createElement('div');
+            item.className = 'event-item' + (isAlert ? ' alert' : '');
+            item.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+            list.insertBefore(item, list.firstChild);
+            if (list.children.length > 50) list.removeChild(list.lastChild);
+        }
+
+        // --- Simular actividad (opcional, para testing) ---
+        // setInterval(() => {
+        //     const lat = 9 + Math.random() * 2;
+        //     const lon = -85 + Math.random() * 3;
+        //     socket.emit('acelerometro_reporte', {
+        //         user_id: 'sim_' + Math.floor(Math.random() * 100),
+        //         latitud: lat,
+        //         longitud: lon,
+        //         timestamp: new Date().toISOString()
+        //     });
+        // }, 3000);
+    </script>
+</body>
+</html>
