@@ -331,8 +331,45 @@ def simulate_earthquake():
         return jsonify({"status": "blocked", "reason": f"Se necesitan al menos {MIN_USERS_FOR_ALERT} usuarios"}), 400
     return jsonify({"status": "simulated alert sent"})
 
-
 if __name__ == "__main__":
+    import sys
+    import json
+    import urllib.request
+
+    # --- MODO CLI: Enviar el simulacro al servidor en vivo ---
+    if len(sys.argv) > 1 and sys.argv[1] == "simular":
+        # Capturar parámetros o usar los de Cartago por defecto
+        mag = float(sys.argv[2]) if len(sys.argv) > 2 else 5.2
+        prof = float(sys.argv[3]) if len(sys.argv) > 3 else 35.0
+        lat = float(sys.argv[4]) if len(sys.argv) > 4 else 9.8644
+        lon = float(sys.argv[5]) if len(sys.argv) > 5 else -83.9194
+        sonido = sys.argv[6].lower() == "true" if len(sys.argv) > 6 else False
+        
+        puerto = os.environ.get("PORT", "5000")
+        url = f"http://127.0.0.1:{puerto}/api/test"
+        
+        datos = json.dumps({
+            "magnitud": mag,
+            "profundidad": prof,
+            "latitud": lat,
+            "longitud": lon,
+            "sonido": sonido
+        }).encode("utf-8")
+        
+        req = urllib.request.Request(url, data=datos, headers={"Content-Type": "application/json"})
+        
+        print(f"[CLI] Enviando simulacro M{mag} a {url}...")
+        try:
+            with urllib.request.urlopen(req) as response:
+                print("✅ Éxito:", response.read().decode())
+        except urllib.error.HTTPError as e:
+            print("⚠️ Alerta bloqueada por el servidor:", e.read().decode())
+        except Exception as e:
+            print("❌ Error de conexión (¿Está el servidor encendido?):", e)
+            
+        sys.exit(0)
+
+    # --- MODO SERVIDOR: Iniciar la aplicación web normal ---
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"
 
@@ -340,3 +377,4 @@ if __name__ == "__main__":
     threading.Thread(target=usgs_worker, daemon=True).start()
 
     socketio.run(app, host="0.0.0.0", port=port, debug=debug)
+    
