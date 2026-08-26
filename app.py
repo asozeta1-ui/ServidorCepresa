@@ -1,10 +1,11 @@
 import os
 import time
 import math
+import re
 from datetime import datetime
 from collections import defaultdict
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -16,6 +17,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 connected_users = {}
 accelerometer_reports = []
 alert_cooldown = {}
+active_alert = None
 ALERT_COOLDOWN_SECONDS = 60
 REPORT_WINDOW_SECONDS = 2
 MIN_REPORTS_FOR_ALERT = 5
@@ -69,6 +71,87 @@ def check_seismic_trigger(lat, lon):
     return False
 
 
+def parse_test_command(text):
+    """
+    Formato: /test /m<magnitud> /p<profundidad> /d<lat,lon> /s(on/off)
+    Ejemplo: /test /m6.5 /p15 /d9.75,-83.75 /s on
+    """
+    text = text.strip()
+    if not text.lower().startswith("/test"):
+        return None
+
+    mag_match = re.search(r'/m([\d.]+)', text, re.IGNORECASE)
+    prof_match = re.search(r'/p([\d.]+)', text, re.IGNORECASE)
+    coord_match = re.search(r'/d([-\d.]+),([-\d.]+)', text, re.IGNORECASE)
+    sound_match = re.search(r'/s(on|off)', text, re.IGNORECASE)
+
+    magnitud = float(mag_match.group(1)) if mag_match else 5.0
+    profundidad = float(prof_match.group(1)) if prof_match else 10.0
+    latitud = float(coord_match.group(1)) if coord_match else 9.75
+    longitud = float(coord_match.group(2)) if coord_match else -83.75
+    sonido = sound_match.group(1).lower() == "on" if sound_match else True
+
+    # Segundos estimados de llegada (fórmula simplificada)
+    segundos = max(5, int(profundidad * 0.8 + magnitud * 2))
+
+    return {
+        "magnitud": magnitud,
+        "profundidad": profundidad,
+        "latitud": latitud,
+        "longitud": longitud,
+        "sonido": sonido,
+        "segundos": segundos,
+        "simulacro": True,
+    }
+
+
+def trigger_alert(params):
+    global active_alert
+    now = datetime.utcnow()
+
+    alert_data = {
+        "tipo": "alerta_sismica",
+        "latitud": params["latitud"],
+        "longitud": params["longitud"],
+        "magnitud": params["magnitud"],
+        "profundidad": params["profundidad"],
+        "segundos": params["segundos"],
+        "sonido": params["sonido"],
+        "simulacro": params.get("simulacro", False),
+        "timestamp": now.isoformat(),
+        "mensaje": (
+            f"SIMULACRO - Sismo de magnitud {params['magnitud']} detectado"
+            if params.get("simulacro")
+            else f"Sismo de magnitud {params['magnitud']} detectado por la red CEPRESA"
+        ),
+    }
+
+    active_alert = alert_data
+    socketio.emit("alerta_sismica", alert_data)
+
+    print("=" * 50)
+    print("  ALERTA SISMICA EMITIDA")
+    print("=" * 50)
+    print(f"  Magnitud:    {params['magnitud']}")
+    print(f"  Profundidad: {params['profundidad']} km")
+    print(f"  Coordenadas: {params['latitud']}, {params['longitud']}")
+    print(f"  Segundos:    {params['segundos']}")
+    print(f"  Sonido:      {'ON' if params['sonido'] else 'OFF'}")
+    print(f"  SIMULACRO:   {'SI' if params.get('simulacro') else 'NO'}")
+    print("=" * 50)
+
+    # Auto-clear despues de 60 segundos
+    def auto_clear():
+        time.sleep(60)
+        global active_alert
+        active_alert = None
+        socketio.emit("alerta_clear", {})
+        print("[ALERT] Alerta auto-desactivada despues de 60s")
+
+    import threading
+    threading.Thread(target=auto_clear, daemon=True).start()
+
+
 # --- Rutas HTTP ---
 @app.route("/")
 def dashboard():
@@ -80,10 +163,31 @@ def api_status():
     return jsonify(
         {
             "personas_en_linea": len(connected_users),
-            "alertas_activas": sum(1 for v in alert_cooldown.values() if isinstance(v, bool)),
+            "alerta_activa": active_alert is not None,
             "timestamp": datetime.utcnow().isoformat(),
         }
     )
+
+
+@app.route("/api/test", methods=["POST"])
+def api_test():
+    """
+    Endpoint HTTP para lanzar una alerta de prueba.
+    POST /api/test
+    Body JSON: {"magnitud": 6.5, "profundidad": 15, "latitud": 9.75, "longitud": -83.75, "sonido": true}
+    """
+    data = request.get_json(silent=True) or {}
+    params = {
+        "magnitud": float(data.get("magnitud", 5.0)),
+        "profundidad": float(data.get("profundidad", 10.0)),
+        "latitud": float(data.get("latitud", 9.75)),
+        "longitud": float(data.get("longitud", -83.75)),
+        "sonido": bool(data.get("sonido", True)),
+        "segundos": max(5, int(float(data.get("profundidad", 10.0)) * 0.8 + float(data.get("magnitud", 5.0)) * 2)),
+        "simulacro": True,
+    }
+    trigger_alert(params)
+    return jsonify({"status": "alert sent", "params": params})
 
 
 # --- WebSocket events ---
@@ -122,7 +226,6 @@ def handle_accelerometer(data):
     if user_id in connected_users:
         connected_users[user_id]["last_report"] = time.time()
 
-    # Retransmitir al dashboard para visualización en tiempo real
     socketio.emit(
         "sensor_event",
         {
@@ -133,17 +236,23 @@ def handle_accelerometer(data):
         },
     )
 
-    # Verificar si se debe disparar alerta
     if check_seismic_trigger(lat, lon):
-        alert_payload = {
-            "tipo": "alerta_sismica",
+        trigger_alert({
             "latitud": lat,
             "longitud": lon,
-            "timestamp": datetime.utcnow().isoformat(),
-            "mensaje": "ALERTA SISMO detectado por la red CEPRESA. Protéjase ahora.",
-        }
-        socketio.emit("alerta_sismica", alert_payload)
-        print(f"[!!!] SISMIC ALERT TRIGGERED at ({lat}, {lon})")
+            "magnitud": 5.0,
+            "profundidad": 10.0,
+            "segundos": 30,
+            "sonido": True,
+            "simulacro": False,
+        })
+
+
+@socketio.on("estoy_a_salvo")
+def handle_estoy_a_salvo(data):
+    user_id = data.get("user_id", "unknown")
+    timestamp = data.get("timestamp", datetime.utcnow().isoformat())
+    print(f"[SAFE] {user_id} reporto estar a salvo ({timestamp})")
 
 
 @socketio.on("reportar_ubicacion")
@@ -154,18 +263,18 @@ def handle_location(data):
         connected_users[user_id]["lon"] = data.get("longitud")
 
 
-# --- Simulación de sismos (para testing) ---
+# --- Simulacion de sismos (para testing via HTTP) ---
 @app.route("/api/simulate_earthquake", methods=["POST"])
 def simulate_earthquake():
-    fake_data = {
-        "tipo": "alerta_sismica",
+    trigger_alert({
         "latitud": 9.9281,
         "longitud": -84.0907,
-        "timestamp": datetime.utcnow().isoformat(),
-        "mensaje": "ALERTA SISMO detectado por la red CEPRESA. Protéjase ahora.",
-        "simulado": True,
-    }
-    socketio.emit("alerta_sismica", fake_data)
+        "magnitud": 6.2,
+        "profundidad": 20.0,
+        "segundos": 36,
+        "sonido": True,
+        "simulacro": True,
+    })
     return jsonify({"status": "simulated alert sent"})
 
 
