@@ -102,8 +102,16 @@ def check_seismic_trigger(lat, lon):
     return False
 
 
+MIN_USERS_FOR_ALERT = 20
+
+
 def trigger_alert(params):
     global active_alert
+
+    if len(connected_users) < MIN_USERS_FOR_ALERT:
+        print(f"[BLOCKED] Alerta bloqueada: solo {len(connected_users)}/{MIN_USERS_FOR_ALERT} usuarios conectados")
+        return False
+
     now = datetime.utcnow()
     alert_data = {
         "tipo": "alerta_sismica",
@@ -123,7 +131,7 @@ def trigger_alert(params):
     }
     active_alert = alert_data
     socketio.emit("alerta_sismica", alert_data)
-    print(f"[!!!] ALERTA SISICA - M{params['magnitud']} en ({params['latitud']}, {params['longitud']})")
+    print(f"[!!!] ALERTA SISICA - M{params['magnitud']} en ({params['latitud']}, {params['longitud']}) - {len(connected_users)} usuarios")
 
     def auto_clear():
         time.sleep(60)
@@ -131,6 +139,7 @@ def trigger_alert(params):
         active_alert = None
         socketio.emit("alerta_clear", {})
     threading.Thread(target=auto_clear, daemon=True).start()
+    return True
 
 
 # --- Worker: sismos reales del mundo (USGS) ---
@@ -207,7 +216,9 @@ def api_test():
         "segundos": max(5, int(float(data.get("profundidad", 10.0)) * 0.8 + float(data.get("magnitud", 5.0)) * 2)),
         "simulacro": True,
     }
-    trigger_alert(params)
+    sent = trigger_alert(params)
+    if not sent:
+        return jsonify({"status": "blocked", "reason": f"Se necesitan al menos {MIN_USERS_FOR_ALERT} usuarios. Actuales: {len(connected_users)}"}), 400
     return jsonify({"status": "alert sent", "params": params})
 
 
@@ -311,11 +322,13 @@ def _broadcast_user_locations():
 
 @app.route("/api/simulate_earthquake", methods=["POST"])
 def simulate_earthquake():
-    trigger_alert({
+    sent = trigger_alert({
         "latitud": 9.9281, "longitud": -84.0907,
         "magnitud": 6.2, "profundidad": 20.0,
         "segundos": 36, "sonido": True, "simulacro": True,
     })
+    if not sent:
+        return jsonify({"status": "blocked", "reason": f"Se necesitan al menos {MIN_USERS_FOR_ALERT} usuarios"}), 400
     return jsonify({"status": "simulated alert sent"})
 
 
