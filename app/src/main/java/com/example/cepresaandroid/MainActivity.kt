@@ -90,6 +90,7 @@ class MainActivity : ComponentActivity() {
                 val context = LocalContext.current
                 var usersOnline by remember { mutableIntStateOf(0) }
                 var isServiceActive by remember { mutableStateOf(CepresaService.isRunning) }
+                var privacyAccepted by remember { mutableStateOf(isPrivacyAccepted(context)) }
 
                 val receiver = remember {
                     object : BroadcastReceiver() {
@@ -121,17 +122,24 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(Unit) {
-                    if (!CepresaService.isRunning) {
+                if (!privacyAccepted) {
+                    PrivacyTermsScreen(onAccept = {
+                        privacyAccepted = true
                         startPermissionFlow()
+                    })
+                } else {
+                    LaunchedEffect(Unit) {
+                        if (!CepresaService.isRunning) {
+                            startPermissionFlow()
+                        }
                     }
-                }
 
-                MainScreen(
-                    usersOnline = usersOnline,
-                    isServiceActive = isServiceActive,
-                    onStartService = { startPermissionFlow() }
-                )
+                    MainScreen(
+                        usersOnline = usersOnline,
+                        isServiceActive = isServiceActive,
+                        onStartService = { startPermissionFlow() }
+                    )
+                }
             }
         }
     }
@@ -293,7 +301,6 @@ fun MainScreen(
                 ) {
                     val strokeWidth = 4.dp.toPx()
                     val radius = (size.minDimension - strokeWidth) / 2
-                    val center = Offset(size.width / 2, size.height / 2)
 
                     drawArc(
                         color = Color(0xFFe94560),
@@ -478,7 +485,7 @@ fun MainScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "CEPRESA v2.0 - Crowdsourcing sismico",
+                text = "CEPRESA v2.0 - JiamiauStudios",
                 fontSize = 9.sp,
                 color = Color(0xFF333333),
                 textAlign = TextAlign.Center
