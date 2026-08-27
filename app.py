@@ -102,7 +102,7 @@ def check_seismic_trigger(lat, lon):
     return False
 
 
-MIN_USERS_FOR_ALERT = 10
+MIN_USERS_FOR_ALERT = 1
 
 
 def trigger_alert(params):
