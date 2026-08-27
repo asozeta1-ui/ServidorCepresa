@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const crypto = require('crypto');
+const path = require('path');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const readline = require('readline');
@@ -401,7 +402,7 @@ io.on('connection', (socket) => {
 });
 
 // ── HTTP Endpoints ──────────────────────────────────────────────────
-app.get('/', (req, res) => res.send(getDashboardHTML()));
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, '..', 'templates', 'dashboard.html')));
 
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', users: connectedUsers.size, activeAlert: !!activeAlert, uptime: process.uptime() });
@@ -481,72 +482,3 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] CEPRESA corriendo en puerto ${PORT}`);
 });
-
-// ── Dashboard HTML ──────────────────────────────────────────────────
-function getDashboardHTML() {
-    return `<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CEPRESA - Dashboard</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f0f1a; color: #e0e0e0; overflow: hidden; height: 100vh; }
-        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
-        .overlay { position: absolute; top: 0; left: 0; right: 0; z-index: 1000; background: linear-gradient(180deg, rgba(15,15,26,0.95) 0%, rgba(15,15,26,0.7) 80%, transparent 100%); padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; }
-        .brand { font-size: 1.8rem; font-weight: 800; color: #e94560; letter-spacing: 3px; }
-        .stats { text-align: right; }
-        .stats .count { font-size: 2.8rem; font-weight: 700; color: #e94560; }
-        .stats .label { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
-        #alert-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; background: rgba(180,0,0,0.15); animation: alertFlash 0.8s infinite alternate; }
-        @keyframes alertFlash { from { background: rgba(180,0,0,0.1); } to { background: rgba(180,0,0,0.35); } }
-        #alert-message { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 10000; background: rgba(140,0,0,0.95); color: #fff; padding: 40px 60px; border-radius: 12px; text-align: center; border: 3px solid #ff0000; box-shadow: 0 0 80px rgba(255,0,0,0.6); }
-        #alert-message h1 { font-size: 2.5rem; margin-bottom: 10px; }
-        #alert-message .simulacro { font-size: 1.5rem; color: #ffcc00; font-weight: bold; margin-bottom: 10px; }
-        #alert-message .details { font-size: 1rem; color: #ffcccc; margin-top: 10px; }
-    </style>
-</head>
-<body>
-    <div id="map"></div>
-    <div class="overlay">
-        <div class="brand">CEPRESA</div>
-        <div class="stats">
-            <div class="count" id="user-count">0</div>
-            <div class="label">personas en línea</div>
-        </div>
-    </div>
-    <div id="alert-overlay"></div>
-    <div id="alert-message">
-        <div class="simulacro" id="alert-simulacro" style="display:none">SIMULACRO</div>
-        <h1>ALERTA SISMICA</h1>
-        <p>Sismo detectado por la red CEPRESA</p>
-        <div class="details" id="alert-detail"></div>
-    </div>
-    <script>
-        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([9.75,-83.75], 7);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
-        const socket = io();
-        socket.on('connect', () => console.log('Conectado'));
-        socket.on('update_users', (d) => document.getElementById('user-count').textContent = d.count);
-        socket.on('alerta_sismica', (d) => {
-            document.getElementById('alert-overlay').style.display = 'block';
-            const msg = document.getElementById('alert-message');
-            msg.style.display = 'block';
-            if (d.simulacro) document.getElementById('alert-simulacro').style.display = 'block';
-            document.getElementById('alert-detail').innerHTML =
-                'Magnitud: ' + d.magnitud + ' | Profundidad: ' + d.profundidad + ' km<br>' +
-                'Coordenadas: ' + d.latitud.toFixed(4) + ', ' + d.longitud.toFixed(4) + '<br>' +
-                'Tiempo estimado: ' + d.segundos + 's';
-            map.setView([d.latitud, d.longitud], 9);
-            L.marker([d.latitud, d.longitud]).addTo(map).bindPopup('ALERTA SISMICA').openPopup();
-            setTimeout(() => { document.getElementById('alert-overlay').style.display = 'none'; msg.style.display = 'none'; document.getElementById('alert-simulacro').style.display = 'none'; }, 30000);
-        });
-        socket.on('alerta_clear', () => { document.getElementById('alert-overlay').style.display = 'none'; document.getElementById('alert-message').style.display = 'none'; document.getElementById('alert-simulacro').style.display = 'none'; });
-    </script>
-</body>
-</html>`;
-}
