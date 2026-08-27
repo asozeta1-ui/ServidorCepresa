@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">CEPRESA</string>
+    <string name="notification_channel_name">CEPRESA Alerta Sísmica</string>
+    <string name="notification_channel_description">Monitoreo sísmico activo</string>
+    <string name="protection_active">PROTECCIÓN ACTIVA</string>
+    <string name="system_inactive">Sistema inactivo</string>
+    <string name="activar_proteccion">ACTIVAR PROTECCIÓN</string>
+    <string name="desactivar">DESACTIVAR</string>
+</resources>

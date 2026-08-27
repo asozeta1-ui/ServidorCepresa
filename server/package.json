@@ -1,0 +1,15 @@
+{
+  "name": "cepresa-server",
+  "version": "1.0.0",
+  "description": "CEPRESA - Servidor de Alerta Sísmica",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "cors": "^2.8.5"
+  }
+}

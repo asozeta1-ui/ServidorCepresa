@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CEPRESA - Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0f0f1a; color: #e0e0e0; overflow: hidden; height: 100vh; }
+        #map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        .overlay {
+            position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+            background: linear-gradient(180deg, rgba(15,15,26,0.95) 0%, rgba(15,15,26,0.7) 80%, transparent 100%);
+            padding: 20px 30px; display: flex; justify-content: space-between; align-items: center;
+        }
+        .brand { font-size: 1.8rem; font-weight: 800; color: #e94560; letter-spacing: 3px; }
+        .stats { text-align: right; }
+        .stats .count { font-size: 2.8rem; font-weight: 700; color: #4caf50; }
+        .stats .label { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
+        .status-bar {
+            position: absolute; bottom: 0; left: 0; right: 0; z-index: 1000;
+            background: linear-gradient(0deg, rgba(15,15,26,0.95) 0%, transparent 100%);
+            padding: 15px 30px; display: flex; justify-content: space-between; font-size: 0.8rem; color: #666;
+        }
+        .status-dot { display: inline-block; width: 8px; height: 8px; background: #4caf50; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        @keyframes eqPulse {
+            0% { box-shadow: 0 0 4px 2px rgba(255,0,0,0.8); transform: scale(1); }
+            50% { box-shadow: 0 0 16px 6px rgba(255,0,0,0.5); transform: scale(1.4); }
+            100% { box-shadow: 0 0 4px 2px rgba(255,0,0,0.8); transform: scale(1); }
+        }
+        .alert-mode { animation: alertBorder 0.5s infinite alternate; }
+        @keyframes alertBorder { from { box-shadow: inset 0 0 60px rgba(255,0,0,0.3); } to { box-shadow: inset 0 0 120px rgba(255,0,0,0.7); } }
+        #alert-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; background: rgba(180,0,0,0.15); pointer-events: none; animation: alertFlash 0.8s infinite alternate; }
+        @keyframes alertFlash { from { background: rgba(180,0,0,0.1); } to { background: rgba(180,0,0,0.35); } }
+        #alert-message {
+            display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 10000;
+            background: rgba(140,0,0,0.95); color: #fff; padding: 40px 60px; border-radius: 12px; text-align: center;
+            border: 3px solid #ff0000; box-shadow: 0 0 80px rgba(255,0,0,0.6);
+        }
+        #alert-message h1 { font-size: 2.5rem; margin-bottom: 10px; }
+        #alert-message .simulacro { font-size: 1.4rem; color: #ffcc00; font-weight: bold; margin-bottom: 8px; }
+        #alert-message p { font-size: 1.1rem; color: #ffcccc; }
+        #alert-message .details { margin-top: 12px; font-size: 0.95rem; color: #ffaaaa; }
+        .event-log {
+            position: absolute; top: 90px; right: 20px; z-index: 1000;
+            background: rgba(15,15,25,0.9); border: 1px solid #333; border-radius: 8px;
+            padding: 12px; width: 300px; max-height: 260px; overflow-y: auto; font-size: 0.75rem;
+        }
+        .event-log h3 { color: #e94560; margin-bottom: 6px; font-size: 0.85rem; }
+        .event-item { padding: 3px 0; border-bottom: 1px solid #222; color: #aaa; }
+        .event-item.alert { color: #ff4444; font-weight: bold; }
+        .event-item.eq { color: #ff8800; }
+        .event-item.user { color: #4caf50; }
+        .legend {
+            position: absolute; bottom: 50px; left: 20px; z-index: 1000;
+            background: rgba(15,15,25,0.9); border: 1px solid #333; border-radius: 8px;
+            padding: 10px 14px; font-size: 0.75rem;
+        }
+        .legend-item { display: flex; align-items: center; margin-bottom: 4px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div class="overlay">
+        <div class="brand">CEPRESA</div>
+        <div class="stats">
+            <div class="count" id="user-count">0</div>
+            <div class="label">personas en linea</div>
+        </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#4caf50"></div> Usuarios activos</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ff0000;animation:eqPulse 0.6s infinite"></div> Sismos en tiempo real</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ff9800"></div> Reportes de sensores</div>
+    </div>
+
+    <div class="event-log" id="event-log">
+        <h3>Eventos en tiempo real</h3>
+        <div id="event-list"></div>
+    </div>
+
+    <div class="status-bar">
+        <div><span class="status-dot"></span> Sistema activo</div>
+        <div id="last-event">Esperando eventos...</div>
+    </div>
+
+    <div id="alert-overlay"></div>
+    <div id="alert-message">
+        <div class="simulacro" id="alert-simulacro" style="display:none"></div>
+        <h1>ALERTA SISMICA</h1>
+        <p>Sismo detectado por la red CEPRESA</p>
+        <div class="details" id="alert-detail"></div>
+    </div>
+
+    <script>
+        const CARTO_API_KEY = 'cb1_29g6_1_201a8281a4099feebd035b61';
+
+        const map = L.map('map', { zoomControl: false, attributionControl: false }).setView([10, -84], 6);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=' + CARTO_API_KEY, { maxZoom: 19, attribution: '&copy; CEPRESA &copy; <a href="https://carto.com/">CARTO</a>' }).addTo(map);
+
+        const socket = io({ transports: ['websocket', 'polling'], reconnection: true });
+
+        const userMarkers = {};
+        const eqMarkers = {};
+        const sensorMarkers = [];
+        let alertActive = false;
+
+        socket.on('user_locations', (data) => {
+            const locations = data.locations || [];
+            const activeLats = new Set();
+
+            locations.forEach((loc, i) => {
+                const key = `${loc.lat.toFixed(3)}_${loc.lon.toFixed(3)}`;
+                activeLats.add(key);
+
+                if (!userMarkers[key]) {
+                    const marker = L.circleMarker([loc.lat, loc.lon], {
+                        radius: 5, fillColor: '#4caf50', color: '#2e7d32',
+                        weight: 1, opacity: 0.9, fillOpacity: 0.7
+                    }).addTo(map);
+                    userMarkers[key] = marker;
+                }
+            });
+
+            Object.keys(userMarkers).forEach(key => {
+                if (!activeLats.has(key)) {
+                    map.removeLayer(userMarkers[key]);
+                    delete userMarkers[key];
+                }
+            });
+
+            if (locations.length > 0) {
+                addEvent(`${locations.length} usuario(s) en el mapa`, false, 'user');
+            }
+        });
+
+        socket.on('earthquake_global', (data) => {
+            showEarthquake(data);
+        });
+
+        function showEarthquake(data) {
+            const { latitud, longitud, magnitud, profundidad, pais, lugar, id } = data;
+            const eqId = id || `eq_${latitud}_${longitud}`;
+
+            if (eqMarkers[eqId]) return;
+
+            const icon = L.divIcon({
+                className: 'eq-icon',
+                html: `<div style="width:22px;height:22px;border-radius:50%;background:radial-gradient(circle,#ff0000 30%,#ff4444 60%,transparent 70%);border:2px solid #ff6666;animation:eqPulse 0.6s infinite;"></div>`,
+                iconSize: [22, 22], iconAnchor: [11, 11]
+            });
+
+            const marker = L.marker([latitud, longitud], { icon }).addTo(map);
+            marker.bindPopup(`
+                <div style="text-align:center;padding:4px">
+                    <div style="font-weight:bold;color:#ff4444;font-size:1rem">${pais}</div>
+                    <div style="font-size:1.8rem;font-weight:bold;color:#ff6600">M ${magnitud}</div>
+                    <div style="color:#ccc;font-size:0.85rem;margin-top:4px">${lugar || ''}</div>
+                    <div style="color:#aaa;font-size:0.8rem">Profundidad: ${profundidad} km</div>
+                </div>
+            `, { closeButton: false, className: 'eq-popup' });
+
+            marker.openPopup();
+            eqMarkers[eqId] = marker;
+
+            addEvent(`Sismo en ${pais}: M${magnitud} - ${lugar || ''}`, false, 'eq');
+            document.getElementById('last-event').textContent = `Sismo: ${pais} M${magnitud} - ${new Date().toLocaleTimeString()}`;
+
+            setTimeout(() => {
+                marker.closePopup();
+                map.removeLayer(marker);
+                delete eqMarkers[eqId];
+            }, 4000);
+        }
+
+        socket.on('connect', () => {
+            console.log('Conectado al servidor CEPRESA');
+            addEvent('Conectado al servidor', false, 'info');
+        });
+
+        socket.on('disconnect', () => {
+            addEvent('Desconectado del servidor', false, 'info');
+        });
+
+        socket.on('update_users', (data) => {
+            document.getElementById('user-count').textContent = data.count;
+        });
+
+        socket.on('sensor_event', (data) => {
+            const { latitud, longitud } = data;
+            const marker = L.circleMarker([latitud, longitud], {
+                radius: 6, fillColor: '#ff9800', color: '#ff5722',
+                weight: 2, opacity: 0.9, fillOpacity: 0.6
+            }).addTo(map);
+            sensorMarkers.push(marker);
+            setTimeout(() => { map.removeLayer(marker); }, 8000);
+            addEvent(`Sensor vib en (${latitud.toFixed(3)}, ${longitud.toFixed(3)})`, false, 'info');
+        });
+
+        socket.on('alerta_sismica', (data) => {
+            const alertMarker = L.marker([data.latitud, data.longitud], {
+                icon: L.divIcon({
+                    html: '<div style="background:#ff0000;width:24px;height:24px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 20px rgba(255,0,0,0.9);animation:pulse 0.5s infinite alternate;"></div>',
+                    iconSize: [24, 24], iconAnchor: [12, 12]
+                })
+            }).addTo(map).bindPopup(`<b style="color:red">ALERTA SISMICA</b><br>${data.mensaje}`);
+            map.setView([data.latitud, data.longitud], 9);
+            activateAlertMode(data);
+        });
+
+        socket.on('alerta_clear', () => {
+            alertActive = false;
+            document.body.classList.remove('alert-mode');
+            document.getElementById('alert-overlay').style.display = 'none';
+            document.getElementById('alert-message').style.display = 'none';
+            addEvent('Alerta desactivada', false, 'info');
+        });
+
+        function activateAlertMode(data) {
+            alertActive = true;
+            document.body.classList.add('alert-mode');
+            document.getElementById('alert-overlay').style.display = 'block';
+            const alertMsg = document.getElementById('alert-message');
+            alertMsg.style.display = 'block';
+            const sim = document.getElementById('alert-simulacro');
+            if (data.simulacro) { sim.style.display = 'block'; sim.textContent = 'SIMULACRO'; }
+            else { sim.style.display = 'none'; }
+
+            document.getElementById('alert-detail').innerHTML =
+                `Magnitud: ${data.magnitud} | Profundidad: ${data.profundidad} km<br>` +
+                `Coordenadas: ${data.latitud.toFixed(4)}, ${data.longitud.toFixed(4)}<br>` +
+                `Tiempo estimado: ${data.segundos}s`;
+            document.getElementById('last-event').textContent = `ALERTA: ${new Date().toLocaleTimeString()}`;
+            addEvent(`ALERTA SISMICA - M${data.magnitud} en (${data.latitud}, ${data.longitud})`, true, 'alert');
+
+            setTimeout(() => {
+                alertActive = false;
+                document.body.classList.remove('alert-mode');
+                document.getElementById('alert-overlay').style.display = 'none';
+                document.getElementById('alert-message').style.display = 'none';
+                document.getElementById('alert-simulacro').style.display = 'none';
+            }, 60000);
+        }
+
+        function addEvent(text, isAlert, type) {
+            const list = document.getElementById('event-list');
+            const item = document.createElement('div');
+            let cls = 'event-item';
+            if (isAlert) cls += ' alert';
+            else if (type === 'eq') cls += ' eq';
+            else if (type === 'user') cls += ' user';
+            item.className = cls;
+            item.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+            list.insertBefore(item, list.firstChild);
+            if (list.children.length > 50) list.removeChild(list.lastChild);
+        }
+
+        async function loadEarthquakesHTTP() {
+            try {
+                const resp = await fetch('/api/earthquakes');
+                const data = await resp.json();
+                if (Array.isArray(data)) {
+                    data.forEach(eq => showEarthquake(eq));
+                }
+            } catch(e) { console.log('Fallback USGS error:', e); }
+        }
+        loadEarthquakesHTTP();
+        setInterval(loadEarthquakesHTTP, 60000);
+    </script>
+</body>
+</html>
