@@ -19,6 +19,7 @@ from flask_socketio import SocketIO, emit
 SECRET_KEY = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 API_KEY = os.environ.get("CEPRESA_API_KEY", secrets.token_hex(24))
 HMAC_SECRET = os.environ.get("CEPRESA_HMAC_SECRET", secrets.token_hex(32))
+CARTO_API_KEY = os.environ.get("CARTO_API_KEY", "cb1_29g6_1_201a8281a4099feebd035b61")
 
 # ─── Rate Limiting ──────────────────────────────────────────────────────
 RATE_LIMIT_WINDOW = 60  # segundos
